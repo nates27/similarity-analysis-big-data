@@ -13,7 +13,7 @@ from nltk.stem import WordNetLemmatizer
 
 
 conf = SparkConf()\
-    .setMaster("local[4]")\
+    .setMaster("local[*]")\
     .set("spark.executor.memory", "4g")\
     .set("spark.driver.memory", "2g")
 
@@ -26,7 +26,8 @@ stopwords = sys.argv[2] #2nd argument
 with open(stopwords, 'r') as file:
     stopwords_list=file.read().split('\n')
 
-output  = sys.argv[3]
+accuracy  = sys.argv[3]
+results = sys.argv[4]
 
 papers =  spark.read.json(arxiv)
 
@@ -109,20 +110,19 @@ tf_rdd = abstracts_rdd.reduceByKey(lambda a, b: a + b)\
 df_rdd = abstracts_rdd.map(lambda x: (x[0][1], x[0][0]))\
     .distinct()\
     .map(lambda x: (x[0], 1))\
-    .reduceByKey(lambda x, y: x + y)\
-    .mapValues(lambda a: (a+1))
+    .reduceByKey(lambda x, y: x + y)
 
 tf_df = tf_rdd.join(df_rdd)
 
 tf_idf = tf_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                    .mapValues(lambda a: (1+math.log10(a[0]))\
-                                           *(math.log10(n/a[1])))\
+                                           *(math.log10((n+1)/(a[1]+1))+1))\
                     .map(lambda x: (x[0][0], (x[0][1], x[1])))\
                     .groupByKey() \
                     .mapValues(lambda x: dict(x)) \
                     .mapValues(lambda x: {k: v / math.sqrt\
-                                          (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
-#                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
+                                          (sum([i**2 for i in x.values()])) for k, v in x.items()})
+
 
 title_rdd = papers_rdd.map(lambda x: (x['id'], x['title']))\
     .mapValues(lambda l: re.split(r'[^\w]+',l))\
@@ -133,32 +133,37 @@ tf_t_rdd = title_rdd.reduceByKey(lambda a, b: a + b)\
     .map(lambda x: (x[0][1], (x[0][0],x[1])))
 
 tf_t_df = tf_t_rdd.leftOuterJoin(df_rdd)\
-    .mapValues(lambda x: (x[0], 1) if x[1] is None else x)
+    .mapValues(lambda x: (x[0], 0) if x[1] is None else x)
 
 tf_t_idf = tf_t_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                    .mapValues(lambda a: (1+math.log10(a[0]))\
-                                           *(math.log10(n/a[1])))\
+                                           *(math.log10((n+1)/(a[1]+1))+1))\
                     .map(lambda x: (x[0][0], (x[0][1], x[1])))\
                     .groupByKey() \
                     .mapValues(lambda x: dict(x)) \
                     .mapValues(lambda x: {k: v / math.sqrt\
                                           (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
-#                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
+
 def pairwise_dot_product(d1, d2):
     return sum(d1.get(key, 0) * d2.get(key, 0) for key in set(d1) & set(d2))
-
-key_title = tf_t_idf.keys()
-key_abstract = tf_idf.keys()
 
 combinations_rdd = tf_t_idf.cartesian(tf_idf)
 cosine_rdd = combinations_rdd.map(lambda x: (x[0][0],\
                                              (x[1][0], pairwise_dot_product(x[0][1], x[1][1]))))
 
-rel_sort = cosine_rdd.groupByKey().\
-    mapValues(lambda x: sorted(x, key=lambda y: y[1], reverse=True))
+rel_sort = cosine_rdd.groupByKey()\
+    .mapValues(lambda x: sorted(x, key=lambda y: y[1], reverse=True))\
+    .map(lambda x: (x[0], x[1][0][0], x[1][0][1]))
 
-top_results = rel_sort.map(lambda x: (x[0], (x[1][0][0], x[1][0][1])))
+top_results = rel_sort.map(lambda x: ('accuracy', (x[0], x[1])))\
+    .mapValues(lambda a: 1 if a[0] == a[1] else 0)\
+    .reduceByKey(lambda u, w: u + w)\
+    .mapValues(lambda f: f/n)
 
+top_results.coalesce(1, shuffle = True).saveAsTextFile(accuracy)
+columns = ['title_id', 'abstract_id', 'cosine']
+sort_result = spark.createDataFrame(rel_sort, schema=columns)
+sort_result.repartition(1).write.parquet(results)
 
 """Task 2"""
 
@@ -172,9 +177,10 @@ cat_rdd = papers_rdd.map(lambda x: ((x['id'], x['categories']), x['abstract']))\
 cattf_rdd = cat_rdd.map(lambda x: ((x[1][0], x[0][1]),x[1][1]))\
     .reduceByKey(lambda a, b: a + b)
 
-for row in top_results.take(5):
-     print(row)
+# for row in top_results.take(15):
+#      print(row)
 
-top_results.saveAsTextFile(output)
+#rel_sort.saveAsTextFile(output)
+
 
 sc.stop()
