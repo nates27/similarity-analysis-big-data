@@ -12,10 +12,13 @@ nltk.download('omw-1.4')
 from nltk.stem import WordNetLemmatizer
 
 
-conf = SparkConf()
+conf = SparkConf()\
+    .setMaster("local[4]")\
+    .set("spark.executor.memory", "4g")\
+    .set("spark.driver.memory", "2g")
+
 sc = SparkContext(conf=conf)
-spark = SparkSession.builder\
-    .getOrCreate()
+spark = SparkSession.builder.config(conf=conf).getOrCreate()
 
 arxiv = sys.argv[1] #1st argument
 stopwords = sys.argv[2] #2nd argument
@@ -119,7 +122,7 @@ tf_idf = tf_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                     .mapValues(lambda x: dict(x)) \
                     .mapValues(lambda x: {k: v / math.sqrt\
                                           (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
-                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
+#                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
 
 title_rdd = papers_rdd.map(lambda x: (x['id'], x['title']))\
     .mapValues(lambda l: re.split(r'[^\w]+',l))\
@@ -140,12 +143,22 @@ tf_t_idf = tf_t_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                     .mapValues(lambda x: dict(x)) \
                     .mapValues(lambda x: {k: v / math.sqrt\
                                           (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
-                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
+#                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
+def pairwise_dot_product(d1, d2):
+    return sum(d1.get(key, 0) * d2.get(key, 0) for key in set(d1) & set(d2))
 
+key_title = tf_t_idf.keys()
+key_abstract = tf_idf.keys()
 
-# for row in tf_t_idf.take(5):
-#       print(row)
-# tf_t_idf.saveAsTextFile(output)
+combinations_rdd = tf_t_idf.cartesian(tf_idf)
+cosine_rdd = combinations_rdd.map(lambda x: (x[0][0],\
+                                             (x[1][0], pairwise_dot_product(x[0][1], x[1][1]))))
+
+rel_sort = cosine_rdd.groupByKey().\
+    mapValues(lambda x: sorted(x, key=lambda y: y[1], reverse=True))
+
+top_results = rel_sort.map(lambda x: (x[0], (x[1][0][0], x[1][0][1])))
+
 
 """Task 2"""
 
@@ -159,6 +172,9 @@ cat_rdd = papers_rdd.map(lambda x: ((x['id'], x['categories']), x['abstract']))\
 cattf_rdd = cat_rdd.map(lambda x: ((x[1][0], x[0][1]),x[1][1]))\
     .reduceByKey(lambda a, b: a + b)
 
-for row in cattf_rdd.take(5):
-      print(row)
-cattf_rdd.saveAsTextFile(output)
+for row in top_results.take(5):
+     print(row)
+
+top_results.saveAsTextFile(output)
+
+sc.stop()
