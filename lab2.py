@@ -26,8 +26,9 @@ with open(stopwords, 'r') as file:
 output  = sys.argv[3]
 
 papers =  spark.read.json(arxiv)
-process_column = ['abstract', 'title']
 
+"""Data Preprocessing"""
+process_column = ['abstract', 'title']
 
 for column in process_column:
     papers = papers.withColumn(column,f.lower(f.col(column)))
@@ -45,6 +46,8 @@ for column in process_column:
     papers = papers.withColumn(column,f.concat_ws(' ', f.col('filtered_'+column)))
 
 papers = papers.withColumn('categories',f.lower(f.col('categories')))
+papers = papers.withColumn('categories',
+                               f.regexp_replace(f.col('categories'), "\s+", ""))
 
 def get_wordnet_pos(treebank_tag):
     """
@@ -88,6 +91,7 @@ papers = papers.select('id','categories','abstract'
 # papers.printSchema()
 # papers.show()
 
+"""Task 1"""
 papers_rdd = papers.rdd
 n = papers_rdd.count()
 abstracts_rdd = papers_rdd.map(lambda x: (x['id'], x['abstract']))\
@@ -113,7 +117,8 @@ tf_idf = tf_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                     .map(lambda x: (x[0][0], (x[0][1], x[1])))\
                     .groupByKey() \
                     .mapValues(lambda x: dict(x)) \
-                    .mapValues(lambda x: {k: v / math.sqrt(sum([i**2 for i in x.values()])) for k, v in x.items()}) \
+                    .mapValues(lambda x: {k: v / math.sqrt\
+                                          (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
                     .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
 
 title_rdd = papers_rdd.map(lambda x: (x['id'], x['title']))\
@@ -133,10 +138,27 @@ tf_t_idf = tf_t_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                     .map(lambda x: (x[0][0], (x[0][1], x[1])))\
                     .groupByKey() \
                     .mapValues(lambda x: dict(x)) \
-                    .mapValues(lambda x: {k: v / math.sqrt(sum([i**2 for i in x.values()])) for k, v in x.items()}) \
+                    .mapValues(lambda x: {k: v / math.sqrt\
+                                          (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
                     .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
 
 
-for row in tf_t_idf.take(5):
+# for row in tf_t_idf.take(5):
+#       print(row)
+# tf_t_idf.saveAsTextFile(output)
+
+"""Task 2"""
+
+cat_rdd = papers_rdd.map(lambda x: ((x['id'], x['categories']), x['abstract']))\
+    .mapValues(lambda l: re.split(r'[^\w]+',l))\
+    .flatMapValues(lambda w: w)\
+    .mapValues(lambda w: (w,1))\
+    .map(lambda x: ((x[0][0],x[1][0]),(x[0][1],x[1][1])))\
+    .reduceByKey(lambda a, b: (a[0], a[1]+b[1]))
+
+cattf_rdd = cat_rdd.map(lambda x: ((x[1][0], x[0][1]),x[1][1]))\
+    .reduceByKey(lambda a, b: a + b)
+
+for row in cattf_rdd.take(5):
       print(row)
-tf_t_idf.saveAsTextFile(output)
+cattf_rdd.saveAsTextFile(output)
