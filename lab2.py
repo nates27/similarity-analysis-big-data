@@ -10,7 +10,7 @@ nltk.download('wordnet')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('omw-1.4')
 from nltk.stem import WordNetLemmatizer
-import numpy as np
+
 
 conf = SparkConf()
 sc = SparkContext(conf=conf)
@@ -96,12 +96,14 @@ abstracts_rdd = papers_rdd.map(lambda x: (x['id'], x['abstract']))\
     .map(lambda w: ((w[0], w[1]),1))
 
 tf_rdd = abstracts_rdd.reduceByKey(lambda a, b: a + b)\
-    .map(lambda x: (x[0][1], (x[0][0],x[1])))
+    .map(lambda x: (x[0][1], (x[0][0],x[1])))\
+
 
 df_rdd = abstracts_rdd.map(lambda x: (x[0][1], x[0][0]))\
     .distinct()\
     .map(lambda x: (x[0], 1))\
-    .reduceByKey(lambda x, y: x + y)
+    .reduceByKey(lambda x, y: x + y)\
+    .mapValues(lambda a: (a+1))
 
 tf_df = tf_rdd.join(df_rdd)
 
@@ -110,34 +112,31 @@ tf_idf = tf_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                                            *(math.log10(n/a[1])))\
                     .map(lambda x: (x[0][0], (x[0][1], x[1])))\
                     .groupByKey() \
-                    .mapValues(lambda x: sorted(x, key=lambda t: t[0])) \
-                    .mapValues(lambda x: [v for k, v in x])\
-                    .mapValues(lambda x: x/np.sqrt(np.sum(np.power(x,2))))\
-                    .mapValues(lambda x: x.tolist())
+                    .mapValues(lambda x: dict(x)) \
+                    .mapValues(lambda x: {k: v / math.sqrt(sum([i**2 for i in x.values()])) for k, v in x.items()}) \
+                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
+
+title_rdd = papers_rdd.map(lambda x: (x['id'], x['title']))\
+    .mapValues(lambda l: re.split(r'[^\w]+',l))\
+    .flatMapValues(lambda w: w)\
+    .map(lambda w: ((w[0], w[1]),1))
+
+tf_t_rdd = title_rdd.reduceByKey(lambda a, b: a + b)\
+    .map(lambda x: (x[0][1], (x[0][0],x[1])))
+
+tf_t_df = tf_t_rdd.leftOuterJoin(df_rdd)\
+    .mapValues(lambda x: (x[0], 1) if x[1] is None else x)
+
+tf_t_idf = tf_t_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
+                   .mapValues(lambda a: (1+math.log10(a[0]))\
+                                           *(math.log10(n/a[1])))\
+                    .map(lambda x: (x[0][0], (x[0][1], x[1])))\
+                    .groupByKey() \
+                    .mapValues(lambda x: dict(x)) \
+                    .mapValues(lambda x: {k: v / math.sqrt(sum([i**2 for i in x.values()])) for k, v in x.items()}) \
+                    .flatMap(lambda x: [((x[0], w), tfidf) for w, tfidf in x[1].items()])
 
 
-
-
-# tf_rdd = abstracts_rdd.reduceByKey(lambda a, b: a + b)\
-#     .map(lambda x: (x[0][1], (x[0][0],x[1])))
-
-# df_rdd = abstracts_rdd.map(lambda x: (x[0][1], x[0][0]))\
-#     .distinct()\
-#     .map(lambda x: (x[0], 1))\
-#     .reduceByKey(lambda x, y: x + y)
-
-# tf_df = tf_rdd.join(df_rdd)
-
-# tf_idf = tf_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
-#                    .mapValues(lambda a: (1+math.log10(a[0]))\
-#                                            *(math.log10(n/a[1])))\
-#                     .map(lambda x: (x[0][0], (x[0][1], x[1])))\
-#                     .groupByKey() \
-#                     .mapValues(lambda x: sorted(x, key=lambda t: t[0])) \
-#                     .mapValues(lambda x: [v for k, v in x])\
-#                     .mapValues(lambda x: x/np.sqrt(np.sum(np.power(x,2))))\
-#                     .mapValues(lambda x: x.tolist())
-
-for row in tf_idf.take(5):
+for row in tf_t_idf.take(5):
       print(row)
-tf_idf.saveAsTextFile(output)
+tf_t_idf.saveAsTextFile(output)
