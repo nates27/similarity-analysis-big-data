@@ -151,9 +151,8 @@ combinations_rdd = tf_t_idf.cartesian(tf_idf)
 cosine_rdd = combinations_rdd.map(lambda x: (x[0][0],\
                                              (x[1][0], pairwise_dot_product(x[0][1], x[1][1]))))
 
-rel_sort = cosine_rdd.groupByKey()\
-    .mapValues(lambda x: sorted(x, key=lambda y: y[1], reverse=True))\
-    .map(lambda x: (x[0], x[1][0][0], x[1][0][1]))
+rel_sort = cosine_rdd.reduceByKey(lambda a, b: [a, b][a[1] < b[1]])\
+    .map(lambda x: (x[0], x[1][0], x[1][1]))
 
 top_results = rel_sort.map(lambda x: ('accuracy', (x[0], x[1])))\
     .mapValues(lambda a: 1 if a[0] == a[1] else 0)\
