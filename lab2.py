@@ -1,16 +1,24 @@
 import sys
 import re
+import math
+import os
+os.environ["PYARROW_IGNORE_TIMEZONE"] = "1"
+
 import pyspark.sql.functions as f
 from pyspark import SparkConf, SparkContext
 from pyspark.ml.feature import RegexTokenizer, StopWordsRemover
 from pyspark.sql import SparkSession
+
 import nltk
-import math
 nltk.download('wordnet')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('omw-1.4')
 from nltk.stem import WordNetLemmatizer
 
+#import pyspark.pandas as ps
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 conf = SparkConf()\
     .setMaster("local[*]")\
@@ -26,8 +34,10 @@ stopwords = sys.argv[2] #2nd argument
 with open(stopwords, 'r') as file:
     stopwords_list=file.read().split('\n')
 
+#output Files
 accuracy  = sys.argv[3]
 results = sys.argv[4]
+heatmap = sys.argv[5] #must be string
 
 papers =  spark.read.json(arxiv)
 
@@ -142,10 +152,11 @@ tf_t_idf = tf_t_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                     .groupByKey() \
                     .mapValues(lambda x: dict(x)) \
                     .mapValues(lambda x: {k: v / math.sqrt\
-                                          (sum([i**2 for i in x.values()])) for k, v in x.items()}) \
+                                          (sum([i**2 for i in x.values()])) for k, v in x.items()})
 
 def pairwise_dot_product(d1, d2):
-    return sum(d1.get(key, 0) * d2.get(key, 0) for key in set(d1) & set(d2))
+    return sum(d1.get(key, 0) * d2.get(key, 0) for key in set(d1) & set(d2))\
+    
 
 combinations_rdd = tf_t_idf.cartesian(tf_idf)
 cosine_rdd = combinations_rdd.map(lambda x: (x[0][0],\
@@ -176,10 +187,38 @@ cat_rdd = papers_rdd.map(lambda x: ((x['id'], x['categories']), x['abstract']))\
 cattf_rdd = cat_rdd.map(lambda x: ((x[1][0], x[0][1]),x[1][1]))\
     .reduceByKey(lambda a, b: a + b)
 
-# for row in top_results.take(15):
+cat_vec = cattf_rdd.map(lambda x: (x[0][0], (x[0][1], x[1])))\
+                .groupByKey()\
+                .mapValues(lambda x: dict(x)) \
+                .mapValues(lambda x: {k: v / math.sqrt\
+                                         (sum([i**2 for i in x.values()])) for k, v in x.items()})
+
+cat_combi = cat_vec.cartesian(cat_vec)
+
+cat_cosine = cat_combi.map(lambda x: (x[0][0],\
+                                             x[1][0], pairwise_dot_product(x[0][1], x[1][1])))
+
+correl = spark.createDataFrame(cat_cosine, ["Row", "Column", "Cosine"])
+correl_pd = correl.toPandas()
+correl_pivot = correl_pd.pivot(index='Row',columns='Column',values='Cosine')
+
+sns.set_theme(style = 'ticks', rc={'figure.dpi': 300})
+fig, ax = plt.subplots()
+sns.heatmap(correl_pivot, cmap=sns.cm.rocket_r, ax=ax)
+ax.set_title('Categories: Cosine Similarity Matrix', fontweight='bold', fontsize=14)
+ax.set_ylabel(None)
+ax.set_xlabel(None)
+fig.savefig(heatmap, bbox_inches="tight")
+
+#correl.repartition(1).write.parquet(heatmap)
+#corr_mat = correl.groupBy("Row").pivot("Column").agg(f.col("Cosine"))
+
+# print(correl_pivot.head(20))
+
+#sort_result.repartition(1).write.parquet(results)
+# for row in cat_cosine.take(15):
 #      print(row)
 
-#rel_sort.saveAsTextFile(output)
-
+#cat_cosine.saveAsTextFile(cat_cosine)
 
 sc.stop()
