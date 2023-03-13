@@ -1,3 +1,10 @@
+"""LAB 2
+Name: NATHANIEL NARTEA CASANOVA
+Student Number: A0262708B
+
+"""
+
+#Packages to import
 import sys
 import re
 import math
@@ -9,17 +16,20 @@ from pyspark import SparkConf, SparkContext
 from pyspark.ml.feature import RegexTokenizer, StopWordsRemover
 from pyspark.sql import SparkSession
 
+# Import nltk for lemmatization.
+# Download nltk models and framework for WordNetLemmatizer
 import nltk
 nltk.download('wordnet')
 nltk.download('averaged_perceptron_tagger')
 nltk.download('omw-1.4')
 from nltk.stem import WordNetLemmatizer
 
-#import pyspark.pandas as ps
+# Import pandas, matplotlib, and seaborn, and seaborn for last step visualization
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# Setting up Spark session configuration
 conf = SparkConf()\
     .setMaster("local[*]")\
     .set("spark.executor.memory", "4g")\
@@ -28,20 +38,25 @@ conf = SparkConf()\
 sc = SparkContext(conf=conf)
 spark = SparkSession.builder.config(conf=conf).getOrCreate()
 
-arxiv = sys.argv[1] #1st argument
-stopwords = sys.argv[2] #2nd argument
+"""Input Files"""
+arxiv = sys.argv[1] #text file
+stopwords = sys.argv[2] #stopwords
 
 with open(stopwords, 'r') as file:
     stopwords_list=file.read().split('\n')
 
-#output Files
-accuracy  = sys.argv[3]
-results = sys.argv[4]
-heatmap = sys.argv[5] #must be string
+"""Output Files"""
+processed = sys.argv[3] #output for processed titles and abstracts
+accuracy  = sys.argv[4] #output for accuracy results
+
+results = sys.argv[5] #output for cosine value calculation results
+heatmap = sys.argv[6] #output for task 2 heatmap, must be a string
 
 papers =  spark.read.json(arxiv)
 
 """Data Preprocessing"""
+# Proceses titles and abstracts in the input file
+# Makes all words lower case and replace special characters with a whitespace
 process_column = ['abstract', 'title']
 
 for column in process_column:
@@ -49,6 +64,8 @@ for column in process_column:
     papers = papers.withColumn(column,
                                f.regexp_replace(f.col(column), "(\\d|\\W)+", ' '))
 
+# Tokenizes each word in the title and abstracts
+# Removes stop words in the title and abstracts
 for column in process_column:
     regexTokenizer = RegexTokenizer(inputCol=column, outputCol='words_'+column,\
                                      pattern="\\W")
@@ -59,14 +76,23 @@ for column in process_column:
     papers = stopwordsRemover.transform(tokenized)
     papers = papers.withColumn(column,f.concat_ws(' ', f.col('filtered_'+column)))
 
+# Processes categories in the input file
+# Makes each category lower case and removes trailing whitespaces
 papers = papers.withColumn('categories',f.lower(f.col('categories')))
 papers = papers.withColumn('categories',
-                               f.regexp_replace(f.col('categories'), "\s+", ""))
+                               f.regexp_replace(f.col('categories'), "\s+$", ""))
 
+"""Following code block performs word lemmatization"""
+
+"""Function: get_wordnet_pos()
+
+Return WORDNET part of speech (POS) compliance to WORDNET lemmatization (a,n,r,v)
+Uses treebank tagset from average_perceptron_tagger to avoid any errors calling default
+WODNET POS tagger
+
+"""
 def get_wordnet_pos(treebank_tag):
-    """
-    return WORDNET POS compliance to WORDENT lemmatization (a,n,r,v) 
-        """
+
     if treebank_tag.startswith('J'):
             return 'a'
     elif treebank_tag.startswith('V'):
@@ -76,15 +102,18 @@ def get_wordnet_pos(treebank_tag):
     elif treebank_tag.startswith('R'):
             return 'r'
     else:
-    # As default pos in lemmatization is Noun
+    # Return noun as default POS
         return 'n'
 
-def lemmatize1(data_str):
-    # expects a string
+"""Function: lemmatize()
+
+Lemmatizes a list of words using WordNetLemmatizer
+"""
+def lemmatize(data_str):
     list_pos = 0
     cleaned_str = ''
     lmtzr = WordNetLemmatizer()
-    #text = data_str.split()
+    #
     tagged_words = nltk.pos_tag(data_str)
     for word in tagged_words:
         lemma = lmtzr.lemmatize(word[0], get_wordnet_pos(word[1]))
@@ -95,15 +124,15 @@ def lemmatize1(data_str):
         list_pos += 1
     return cleaned_str
 
-sparkLemmer1 = f.udf(lambda x: lemmatize1(x), f.StringType())
+sparkLemmer = f.udf(lambda x: lemmatize(x), f.StringType())
 
 papers = papers.select('id','categories','filtered_title',
-                        sparkLemmer1('filtered_abstract').alias('abstract'))
+                        sparkLemmer('filtered_abstract').alias('abstract'))
 papers = papers.select('id','categories','abstract'
-                       ,sparkLemmer1('filtered_title').alias('title'))
+                       ,sparkLemmer('filtered_title').alias('title'))
 
-# papers.printSchema()
-# papers.show()
+# Output processed titles and abstracts as parquet file for analysis
+# papers.repartition(1).write.parquet(processed)
 
 """Task 1"""
 papers_rdd = papers.rdd
@@ -152,7 +181,8 @@ tf_t_idf = tf_t_df.map(lambda x: ((x[1][0][0],x[0]),(x[1][0][1],x[1][1])))\
                     .groupByKey() \
                     .mapValues(lambda x: dict(x)) \
                     .mapValues(lambda x: {k: v / math.sqrt\
-                                          (sum([i**2 for i in x.values()])) for k, v in x.items()})
+                                          (sum([i**2 for i in x.values()]))\
+                                              for k, v in x.items()})
 
 def pairwise_dot_product(d1, d2):
     return sum(d1.get(key, 0) * d2.get(key, 0) for key in set(d1) & set(d2))\
@@ -170,10 +200,6 @@ top_results = rel_sort.map(lambda x: ('accuracy', (x[0], x[1])))\
     .reduceByKey(lambda u, w: u + w)\
     .mapValues(lambda f: f/n)
 
-top_results.coalesce(1, shuffle = True).saveAsTextFile(accuracy)
-columns = ['title_id', 'abstract_id', 'cosine']
-sort_result = spark.createDataFrame(rel_sort, schema=columns)
-sort_result.repartition(1).write.parquet(results)
 
 """Task 2"""
 
@@ -191,34 +217,51 @@ cat_vec = cattf_rdd.map(lambda x: (x[0][0], (x[0][1], x[1])))\
                 .groupByKey()\
                 .mapValues(lambda x: dict(x)) \
                 .mapValues(lambda x: {k: v / math.sqrt\
-                                         (sum([i**2 for i in x.values()])) for k, v in x.items()})
+                                         (sum([i**2 for i in x.values()]))\
+                                              for k, v in x.items()})
 
 cat_combi = cat_vec.cartesian(cat_vec)
 
-cat_cosine = cat_combi.map(lambda x: (x[0][0],\
-                                             x[1][0], pairwise_dot_product(x[0][1], x[1][1])))
+cat_cosine = cat_combi.map(lambda x: (x[0][0],x[1][0],\
+                                      pairwise_dot_product(x[0][1], x[1][1])))
 
 correl = spark.createDataFrame(cat_cosine, ["Row", "Column", "Cosine"])
 correl_pd = correl.toPandas()
 correl_pivot = correl_pd.pivot(index='Row',columns='Column',values='Cosine')
 
+"""Output for Task 1"""
+top_results.coalesce(1, shuffle = True).saveAsTextFile(accuracy)
+columns = ['title_id', 'abstract_id', 'cosine']
+sort_result = spark.createDataFrame(rel_sort, schema=columns)
+sort_result.repartition(1).write.parquet(results)
+
+samples = rel_sort.filter(lambda x: x[0]!= x[1]).take(5)
+
+sample_dict = []
+for sample in samples:
+    i, j, k = sample
+    title = papers.filter(f.col('id') == i).select('title').first().title
+    abstract =  papers.filter(f.col('id') == j).select('abstract').first().abstract
+    dict = {'title_id': i, 'title': title, 'abstract_id': j,'abstract': abstract,
+                                   'similarity':k}
+    sample_dict.append(dict)
+
+samples_pd = pd.DataFrame(sample_dict)
+samples_pd.to_csv(processed)
+
+"""Output for Task 2"""
+
 sns.set_theme(style = 'ticks', rc={'figure.dpi': 300})
 fig, ax = plt.subplots()
-sns.heatmap(correl_pivot, cmap=sns.cm.rocket_r, ax=ax)
+sns.heatmap(correl_pivot, cmap='afmhot_r', ax=ax)
 ax.set_title('Categories: Cosine Similarity Matrix', fontweight='bold', fontsize=14)
 ax.set_ylabel(None)
 ax.set_xlabel(None)
 fig.savefig(heatmap, bbox_inches="tight")
 
-#correl.repartition(1).write.parquet(heatmap)
-#corr_mat = correl.groupBy("Row").pivot("Column").agg(f.col("Cosine"))
-
-# print(correl_pivot.head(20))
-
-#sort_result.repartition(1).write.parquet(results)
-# for row in cat_cosine.take(15):
-#      print(row)
-
-#cat_cosine.saveAsTextFile(cat_cosine)
-
 sc.stop()
+
+
+
+
+
