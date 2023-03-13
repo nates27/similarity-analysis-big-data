@@ -45,11 +45,11 @@ stopwords = sys.argv[2] #stopwords
 with open(stopwords, 'r') as file:
     stopwords_list=file.read().split('\n')
 
-"""Output Files"""
-processed = sys.argv[3] #output for processed titles and abstracts
-accuracy  = sys.argv[4] #output for accuracy results
+"""Output Files Arguments"""
 
-results = sys.argv[5] #output for cosine value calculation results
+accuracy  = sys.argv[3] #output for accuracy results
+results = sys.argv[4] #output for cosine value calculation results
+processed = sys.argv[5] #output for processed titles and abstracts
 heatmap = sys.argv[6] #output for task 2 heatmap, must be a string
 
 papers =  spark.read.json(arxiv)
@@ -241,9 +241,12 @@ sample_dict = []
 for sample in samples:
     i, j, k = sample
     title = papers.filter(f.col('id') == i).select('title').first().title
-    abstract =  papers.filter(f.col('id') == j).select('abstract').first().abstract
-    dict = {'title_id': i, 'title': title, 'abstract_id': j,'abstract': abstract,
-                                   'similarity':k}
+    abstract_w =  papers.filter(f.col('id') == j).select('abstract').first().abstract
+    abstract_c =  papers.filter(f.col('id') == i).select('abstract').first().abstract
+    dict = {'title_id': i, 'title': title, 'abstract_wrong_id': j,
+            'abstract_wrong': abstract_w,
+            'abstract_correct': abstract_c,
+            'similarity':k}
     sample_dict.append(dict)
 
 samples_pd = pd.DataFrame(sample_dict)
