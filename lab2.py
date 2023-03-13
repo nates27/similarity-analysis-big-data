@@ -2,6 +2,14 @@
 Name: NATHANIEL NARTEA CASANOVA
 Student Number: A0262708B
 
+Packages needed:
+matplotlib==3.7.0
+nltk==3.7
+numpy==1.23.5
+pandas==1.5.3
+pyspark==3.2.1
+seaborn==0.12.2
+
 """
 
 #Packages to import
@@ -9,7 +17,7 @@ import sys
 import re
 import math
 import os
-os.environ["PYARROW_IGNORE_TIMEZONE"] = "1"
+os.environ["PYARROW_IGNORE_TIMEZONE"] = "1" #remove warnings for pyarrow
 
 import pyspark.sql.functions as f
 from pyspark import SparkConf, SparkContext
@@ -315,11 +323,11 @@ for sample in samples:
     title = papers.filter(f.col('id') == i).select('title').first().title
     abstract_w =  papers.filter(f.col('id') == j).select('abstract').first().abstract
     abstract_c =  papers.filter(f.col('id') == i).select('abstract').first().abstract
-    dict = {'title_id': i, 'title': title, 'abstract_wrong_id': j,
+    rows = {'title_id': i, 'title': title, 'abstract_wrong_id': j,
             'abstract_wrong': abstract_w,
             'abstract_correct': abstract_c,
             'similarity':k}
-    sample_dict.append(dict)
+    sample_dict.append(rows)
 
 samples_pd = pd.DataFrame(sample_dict)
 samples_pd.to_csv(processed)
