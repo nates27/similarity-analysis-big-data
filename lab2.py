@@ -2,12 +2,14 @@
 Name: NATHANIEL NARTEA CASANOVA
 Student Number: A0262708B
 
+Python Version: 3.10.9
+PySpark: 3.2.1
+
 Packages needed:
 matplotlib==3.7.0
 nltk==3.7
 numpy==1.23.5
 pandas==1.5.3
-pyspark==3.2.1
 seaborn==0.12.2
 
 """
@@ -47,7 +49,7 @@ sc = SparkContext(conf=conf)
 spark = SparkSession.builder.config(conf=conf).getOrCreate()
 
 """Input Files"""
-arxiv = sys.argv[1] #text file
+arxiv = sys.argv[1] #text data json file
 stopwords = sys.argv[2] #stopwords
 
 with open(stopwords, 'r') as file:
@@ -58,7 +60,7 @@ with open(stopwords, 'r') as file:
 accuracy  = sys.argv[3] #output for accuracy results
 results = sys.argv[4] #output for cosine value calculation results
 processed = sys.argv[5] #output for processed titles and abstracts
-heatmap = sys.argv[6] #output for task 2 heatmap, must be a string
+heatmap = sys.argv[6] #output for task 2 heatmap image. must be a .png file
 
 """DATA PREPROCESSING"""
 #Reads json file as a Spark DataFrame
@@ -117,6 +119,7 @@ def get_wordnet_pos(treebank_tag):
 """Function: lemmatize()
 
 Lemmatizes a list of words using WordNetLemmatizer
+
 """
 def lemmatize(data_str):
     list_pos = 0
@@ -148,7 +151,7 @@ papers = papers.select('id','categories','abstract'
 # where the real fun starts
 
 """TASK 1"""
-# Convert papers df into an RDD
+# Convert papers dataframe into an RDD
 papers_rdd = papers.rdd
 
 # Count number of documents in the RDD
@@ -208,7 +211,7 @@ tf_t_rdd = title_rdd.reduceByKey(lambda a, b: a + b)\
 tf_t_df = tf_t_rdd.leftOuterJoin(df_rdd)\
     .mapValues(lambda x: (x[0], 0) if x[1] is None else x)
 
-# Implements TF-IDF calculation and normalizations for each document title
+# Implements TF-IDF calculation and normalization for each document title
 # TF-IDF formula takes cares of 0 document frequencies
 # Same calculation and mapping as with abstract words
 # Final tuple structure (id, {title_word_1: tf-idf_1...title_word_n: tf-idf_n})
@@ -245,7 +248,6 @@ def pairwise_dot_product(d1, d2):
 cosine_rdd = combinations_rdd.map(lambda x: (x[0][0],\
                                              (x[1][0], pairwise_dot_product(x[0][1], x[1][1]))))
 
-# Maps combinations into tuple structure  (title_id, (abstract_id, similarity))
 # For each title_id, retrieves the abstract_id and similarity with the highest similarity value
 # Maps resulting tuples into (title_id, abstract_id, similarity) for output
 rel_sort = cosine_rdd.reduceByKey(lambda a, b: [a, b][a[1] < b[1]])\
@@ -253,7 +255,7 @@ rel_sort = cosine_rdd.reduceByKey(lambda a, b: [a, b][a[1] < b[1]])\
 
 # Accuracy calculation 
 # Set "accuracy" word as key, and title_id and abstract_id pairs as values
-# Set tuple structure to (accuract, value) where value = 1 if title_id = abstract_id, else 0
+# Set tuple structure to (accuracy, value) where value = 1 if title_id = abstract_id, else 0
 # Sums all values and divides by total number of documents to get accuracy rate
 top_results = rel_sort.map(lambda x: ('accuracy', (x[0], x[1])))\
     .mapValues(lambda a: 1 if a[0] == a[1] else 0)\
@@ -261,7 +263,7 @@ top_results = rel_sort.map(lambda x: ('accuracy', (x[0], x[1])))\
     .mapValues(lambda f: f/n)
 
 
-"""Task 2"""
+"""TASK 2"""
 
 #Calcuates term frequency in each abstract
 cat_rdd = papers_rdd.map(lambda x: ((x['id'], x['categories']), x['abstract']))\
@@ -333,7 +335,7 @@ samples_pd = pd.DataFrame(sample_dict)
 samples_pd.to_csv(processed)
 
 """Output for Task 2"""
-# Output heatmap image for the category similarity/matrix 
+# Output heatmap image for the category similarity matrix 
 sns.set_theme(style = 'ticks', rc={'figure.dpi': 300})
 fig, ax = plt.subplots()
 sns.heatmap(correl_pivot, cmap='afmhot_r', ax=ax)
