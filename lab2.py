@@ -64,7 +64,7 @@ heatmap = sys.argv[6] #output for task 2 heatmap image. must be a .png file
 
 """DATA PREPROCESSING"""
 #Reads json file as a Spark DataFrame
-papers =  spark.read.json(arxiv)
+papers =  spark.read.option("allowBackslashEscapingAnyCharacter", "True").json(arxiv)
 
 # Proceses titles and abstracts in the input file
 # Makes all words lower case and replace special characters with a whitespace
