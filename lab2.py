@@ -1,7 +1,4 @@
 """LAB 2
-Name: NATHANIEL NARTEA CASANOVA
-Student Number: A0262708B
-
 Python Version: 3.10.9
 PySpark: 3.2.1
 
